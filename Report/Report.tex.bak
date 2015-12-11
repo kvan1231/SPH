@@ -1,0 +1,419 @@
+\documentclass{article}
+
+\usepackage{natbib}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\title{Phys 580 Final Project: Smoothed Particle Hydrodynamics}
+\author{Kenny Van, ID:1255162}
+\date{\today}
+
+\begin{document}
+
+	\maketitle
+	
+    \begin{abstract}
+        Smoothed particle hydrodynamics (SPH) is a well established but still evolving method of simulation that was initially made for astrophysical simulations. Initially created in 1977\cite{Gingold1977, Lucy1977}, the code has continued to be developed for more complicated systems \cite{Price2011}. Here, we will give a basic overview of the theory of SPH and how I applied it to the two dimensional toy models \cite{Monaghan2006}. We will compare results found using this code to those we expect to see analytically. We will also compare two common smoothing kernels to see if they produce drastically different results in our simulations. Finally, we will attempt a collision model of two bodies. We see that in all cases the code appears to produce reliable results and with it's relatively straightforward theory, further expansion to this code would be viable.
+    \end{abstract}    	
+	
+	\section{Introduction}	
+	
+        Smoothed particle hydrodynamics (SPH) is a meshless particle based method for simulating fluid dynamics. Originally created to model complex stellar models \cite{Gingold1977, Lucy1977}, the SPH model has been greatly extended since its inception to cover a wide variety of physical models\cite{Monaghan2005, Price2011}. As stated before SPH is a meshless particle method, this means that the computation works independently of any grid. As such, unlike finite-difference methods, interactions within the volume between elements is represented entirely by forces between particles. The main result of the meshless nature of SPH is the ability to calculate all values in a coordinate system centered on each element. This change in coordinate system allows for a purely Lagrangian method of calculation. But in order to have elements interact, a smoothing kernel must be introduced to the force calculations. A major advantage of SPH is its conservative properties. SPH conserves both linear and angular momentum regardless of geometry \citep{Price2011}. In comparison to mesh based methods, SPH can easily simulate a mixture of materials by dividing the particles used into the appropriate properties. 
+	        	
+        In the following sections, I will discuss the base theory of SPH and my choices in implementation in python. Using my implementation, I will then use it to try to recreate toy star models \cite{Monaghan2006}. Initial conditions set for our system were influenced by work done by Monaghan \& Price (2004, 2006)\cite{Monaghan2004,Monaghan2006} as well as Braune \& Lewiner (2009)\cite{Braune2009}. The results will be presented and comparisons will be made with those found by Monaghan \& Price (2006). In addition to the simple models initially prescribed by Monaghan \& Price(2006), I will simulate a collision between two toy stars. A discussion on current and future work done in regards to SPH will be presented after the analysis.
+	        
+	\section{Underlying Theory}
+	    
+	    As mentioned in the Introduction, SPH is a Lagrangian method of simulating fluids. This results in the entirety of the fluid being approximated by a collection of particle elements, each with the appropriate physical quantities. In order to properly use SPH, the equations describing these physical quantities must be defined. The Euler equation for a non-dispersive ideal fluid is:
+	    
+	    \begin{equation}
+	        \rho \frac{dv}{dt} = -\nabla P + f
+	    \end{equation}
+        	
+        here $\rho$ is the density, $v$ is the velocity, $t$ is time, $P$ is the pressure and $f$ is any additional external force. In this work we will attempt to use simple physical relations wherever possible. With that in mind, we assume that all our models can be sufficiently approximated with a polytropic fluid. This results in the following relation between pressure and density:
+        
+        \begin{equation}
+            P = k\rho^{1+\frac{1}{n}}
+        \end{equation}
+        
+        where $k$ is a multiplicative constant and $n$ is the polytropic index. Again, the key idea in SPH is to approximate a fluid as a collection of particles. The above equations do not allow for this, instead we will reform the equations with a smoothed interpolated version. Any smooth interpolating function can be described as \cite{Monaghan1992}:
+        
+        \begin{equation}
+            A(r) = \int A(r')W(r-r',h)dr'
+        \end{equation}
+	
+	    where $A(r)$ is some function, $W(r,h)$ is the smoothing kernel $r$ is the particle's position and $h$ is the smoothing length scale. The kernel must satisfy four conditions:
+    
+        \begin{enumerate}
+            \item Compactness: 
+                $$W(\frac{r}{h}) = 0$$ When $\frac{r}{h} \geq 1$. In other words, particles outside a certain range $h$ have no effect on each other.
+            
+            \item Delta Function Convergence: 
+                $$\lim_{h\to 0} W(r,h) = \delta(r)$$ As the smoothing length approaches zero, our kernel becomes the delta dirac function.
+            
+            \item Unity Convergence: 
+                $$\int W(r)dr = 1$$
+            
+            \item Smooth and continuous.
+            
+            \item Positive and invariant under parity
+        \end{enumerate}
+        
+        Many different kernels satisfy these conditions, we will use an arbitrary d-dimensional Gaussian kernel:
+            
+        \begin{equation}
+            W(r,h) = (\frac{1}{h\sqrt{\pi}})^{d} e^{-(\frac{||r||^2}{h})}
+        \end{equation}
+            
+        The Gaussian was chosen as it produces results most similar to those seen physically \cite{Gingold1977}. Another very common kernel is the cubic spline approximation in two dimensions \cite{Price2012}:
+        
+        \begin{equation}
+            W(r,h) = \frac{10}{7\pi h^2}         
+            \begin{cases}
+                \frac{1}{4} (2-\frac{r}{j})^3 - (1-\frac{r}{h})^3 &  0 \leq \frac{r}{h} < 1 \\
+                \frac{1}{4} (2-\frac{r}{j})^3 & 1 \leq \frac{r}{h} < 2 \\
+                0 & \frac{r}{h} \geq 2
+                    
+            \end{cases}
+        \end{equation}                
+	    
+        I will compare the two splines to determine how large of a difference there is in choice of kernel for the toy stars. 
+        
+        Equation (3) must then be transformed into a discretized form for N particles. This numeric form will then be applied to the physical values in the system:
+        
+        \begin{equation}
+            A(r) = \sum_i^N A(r_i)W(r_i,h)\Delta r
+        \end{equation}
+
+        The derivative of this function is required to calculate the acceleration
+        
+        \begin{equation}
+            \nabla A(r) = \sum_i^N A(r_i)\nabla W(r_i,h)\Delta r
+        \end{equation}        
+        
+        We can now apply equation (7) to a rearranged equation (1) and (2):
+             
+        \begin{equation}
+            \frac{dv}{dt} = - \frac{\nabla P}{\rho} + \frac{f}{\rho}
+        \end{equation}
+             
+        and    
+         
+        \begin{equation}
+            \frac{\nabla P}{\rho} = \nabla(\frac{P}{\rho}) + \frac{P}{\rho ^2}\nabla\rho
+        \end{equation}
+           
+        Using equations (8), (9) and (10) we get the key equations for SPH, acceleration can be defined as:
+                 
+        \begin{equation}
+            \frac{dv_i}{dt} = - \sum_{i,j \neq i}^N m_i(\frac{P_i}{\rho _i^2} + \frac{P_j}{\rho _j^2})\nabla W(r_i - r_j,h) + f_i
+        \end{equation}
+       
+        with density as:       
+       
+        \begin{equation}
+            \rho_i = \sum_{i,j \neq i}^N m_i W(r_i-r_j,h)
+        \end{equation}
+        
+        The above equations are the main equations used to find the time evolution of the fluid in SPH. It is also important to note that the term $f_i$ in equation (10) represents any external forces applied to the fluid. This allows for this general form of the equation to be expanded to incorporate more complex effects and cover more advanced physical systems. An important aspect of the two above equations is that the sum is over two indices $i$ and $j$ in two dimensions. The $j$ index also only applies when $i \neq j$ to prevent the effects between particles being calculated twice.         
+        
+	    \subsection{Integration Method}
+        
+        Due to SPH approximating a continuous fluid as a collection of discrete elements it is possible for many time integration methods to be used. We will follow the method used by Monaghan (2005) \cite{Monaghan2005} where he uses what is known as a Verlet second order integrator. Another way this integration method is defined is through the name "leapfrog integrator" which adequately describes what is done. This integration method is preferred over some more robust methods due to its simplicity, it is explicit, second order and conserves energy. This integration method is as follows:
+        
+        \begin{equation}
+            v_{t+\Delta t/2} = v_{t-\Delta t/2} +\frac{1}{2} \Delta t a_t        
+        \end{equation}
+
+        \begin{equation}
+            r_{t+\Delta t/2} = r_t + \Delta t v_{t+\Delta t/2}
+        \end{equation}
+        
+        Where the values are denoted as $t$, $t+\Delta t/2$ and $t-\Delta t/2$ are at the timestep, half a step after and half a timestep later respectively. $\Delta t$ represents the timestep size used in the simulations. We see that with this integration method to properly use this integration method the information at timestep $-1/2$ must be found. This can be done using the Euler equations to find $v_{t-1/2}$. Another approximation that we make with our code is the assumption that changes in velocity are small with each timestep. This is done so that we may decouple the velocity dependence in acceleration that would arise from equation (12). With this approximation, we can rewrite velocity as an equation that depends only on its previous and next point:
+        
+        \begin{equation}
+            v_{t+\Delta t} = \frac{v_{t-\Delta t/2} +v_{t+\Delta t/2}}{2}
+        \end{equation}
+
+        \subsection{Smoothing Scale Length}
+
+        The smoothing scale length is a key initial value that must be defined in SPH. The scale length $h$ represents how far each element has an effect. If the value is too small, there may be no interaction between particles if the value is too large, the simulation may be unstable. A method of defining $h$ was given in the initial creation of SPH \cite{Gingold1977}. In the paper it is recommended that $h$ is chosen such that it is of the same order of magnitude as :
+        
+         \begin{equation}
+         \sqrt{(\bar{r^2} - \bar{r}^2)}
+         \end{equation}
+         
+         Here $\bar{r}$ represents the average position of the particle. In our simulations we will be using a prescription of $h$ as defined:
+         
+         \begin{equation}
+         h =  \frac{\Delta t}{\sqrt{\frac{N}{1000}}}
+         \end{equation}
+    
+        This is chosen to ensure that between timesteps $\Delta t$, the smoothing length $h$ is large enough to cause interactions between elements. $N$ represents the number of particles used in the simulation. So the division by $\sqrt{\frac{N}{1000}}$ is used to ensure only a fraction of the elements will be included. It is important to note that determining an efficient smoothing length such that the kernel includes enough elements to be accurate, but not so many that the computation is highly time consuming is still an area of ongoing work \cite{Cossins2010}.  
+
+	\section{Implementation and Tests}
+
+        The SPH code was written in python 2.7.6 and all simulations were run locally on my personal laptop. A minor issue with using python for SPH is that the language is not ideal for numerical simulations. This is evident in my current implementation running entirely on a single core. The code itself is also not highly optimized, but with low particle count and few timesteps the simulations finished in a reasonable amount of time. The code was created to reproduce the simple results from Monaghan \& Price 2006 \cite{Monaghan2006}. As such the code is written in 2D and an external force term must be applied to the acceleration calculations. From the toy star models described the acceleration is given as such:
+    
+        \begin{equation}
+            \frac{dv_i}{dt} = -\varepsilon v_i - \sum_{i,j\neq i}^N m_i(\frac{P_i}{\rho _i^2} + \frac{P_j}{\rho _j^2})\nabla W(r_i - r_j,h) - gr_i
+        \end{equation}
+    
+        We see that this is a slightly modified version of the general acceleration equations with the addition of two external force terms. The $g$ term is a simplified gravity term that forces the system around the origin. Without this term, we would expect the system to disperse similar to an ideal gas in a large volume. We have an additional dampening term in $\varepsilon$ that reduces the overall effects of the base acceleration calculation. Without this dampening term, the system will likely never reach equilibrium.
+
+        In order to test the validity of our SPH code, we need an analytic solution to compare our results with. We expect that once the system reaches equilibrium $v=0$. Using this we can solve equation 1:
+    
+        \begin{equation}
+            0 = -\frac{\nabla P}{\rho} - gr
+        \end{equation}
+    
+        \begin{equation}
+            0 = -\frac{k(1+\frac{1}{n})}{\rho} \rho^{1/n} \nabla \rho - gr
+        \end{equation}
+    
+        Which can solved analytically to give the relation for density:
+    
+        \begin{equation}
+            \rho (r) = (\frac{g}{4k(n+1)}(R^2-r^2))^n 
+        \end{equation}
+
+        Where again, $g$ is a simplified gravity constant, $k$ is a multiplicative value used in finding pressure, $n$ is the polytropic index, $R$ is the radius of the star while $r$ is the radial position. Using the fact that the density equates to $M/V$, or mass over volume. In our case as the equation is two dimensional we get the equation:
+    
+        \begin{equation}
+            M = \int_0^R d^2 r\rho (r)
+        \end{equation}
+
+    	Using this with equation (20) we can solve for $g$:
+    	
+    	\begin{equation}
+    	    g = 2k\pi^{-1/n} \frac{(\frac{M(1+n)}{R^2})^{1+\frac{1}{n}}}{M} 
+    	\end{equation}
+	
+        Using this we will run multiple simulations and if properly implemented the solution should match with that found in equation (20) after sufficient timesteps.	
+	
+	\section{Results}
+		
+\begin{table}[h]
+\caption{Table of values for simulations, simulation 6 and 7 are collisions where the values in brackets represent the particles per star. In the gravity column the $g$ value corresponds to equation (22)}
+\begin{tabular}{|c|c|c|c|c|c|c|}
+\hline
+           & Particle Count  & Radius & Timesteps & Damping & Gravity & Kernel   \\ \hline
+1          & 100             & 0.75   & 200       & 0       & 0       & Gaussian \\ \hline
+2          & 100             & 0.75   & 200       & 1       & 0       & Gaussian \\ \hline
+3          & 100             & 0.75   & 200       & 0       & $g$     & Gaussian \\ \hline
+4          & 100             & 0.75   & 200       & 1       & $g$     & Gaussian \\ \hline
+5          & 100             & 0.75   & 200       & 1       & $g$     & Cubic    \\ \hline
+6          & 800, (400, 400) & 0.25   & 600       & 1       & $g$     & Gaussian \\ \hline
+7          & 500, (400, 100) & 0.75   & 600       & 6       & $g$     & Gaussian \\ \hline
+\end{tabular}
+\end{table}	
+	
+	    I performed 7 simulations \footnote{Videos of all results are available for download at \url{www.ualberta.ca/~kvan/Gifs.tar.gz}} of the toy star models in arbitrary dimensionless units. To test the claims made in previous sections, simulations were made with appropriate initial conditions. All of the simulations parameters are listed in table 1 with plots of the results shown below. All of the initial positions of the star are generated using a random seed from python. The particles are randomly distributed within a radius which is initially defined as shown in table 1.
+	    
+	    In simulations 1 to 3, I test the effects of the $g$ and $\varepsilon$ terms in our acceleration equation. We see that the gravity and damping terms act the way we expect. The next step in our simulations was to determine if there is a noticeable difference between cubic spline fits and a Gaussian fit. With a simple model such as the one used here, it would be expected that the choice in kernel would not cause large variations. In figure 3, we see that this prediction is true as the two kernels produce similar final density profiles.
+
+	    	    
+        \begin{figure}[!h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig5/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig5/050.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig5/100.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig5/199.png} 
+            \end{minipage} 
+            \caption{Simulation 1 at various iterations, with no gravity and no damping we see the particles disperse.}
+        \end{figure}
+
+        \begin{figure}[!h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig7/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig7/025.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig7/050.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig7/075.png} 
+            \end{minipage} 
+            \caption{Simulation 2 at various iterations, with damping but no gravity the particles move until they no longer interact.}
+        \end{figure}
+        
+        \begin{figure}[!h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig6/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig6/050.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig6/100.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig6/199.png} 
+            \end{minipage} 
+            \caption{Simulation 3 at various iterations, with gravity but no damping, the particles do not appear to be closer to equilibrium after 200 steps.}
+        \end{figure}
+        
+         \begin{figure}[h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../rho_profile_1.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../rho_profile_2.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \caption{The basic toy star model using two different kernels. The left figure is using the Gaussian kernel while the right figure uses the cubic spline. In both plots the blue is the results produced by the code while the red line is the analytic answer.}
+        \end{figure}
+    
+        Seeing that the two kernels produce similar final results, one would expect the choice of kernel here to be arbitrary. This is not true as the cubic spline has a distinct advantage over the Gaussian. With the way the cubic spline is defined, each particle only affects elements within $0 \leq r \leq 2h$. This can significantly reduce computation time over using the Gaussian kernel where all elements affect one another. However, the trade off for longer computation time using the Gaussian is that it generally reproduces results more similar to physical results. So while the cubic spline would be more time efficient, all further simulations will be done with the Gaussian.
+        
+        \begin{figure}[h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig1/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig1/050.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig1/100.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig1/199.png} 
+            \end{minipage} 
+            \caption{Simulation 4 at various iterations, this simulation is using the Gaussian kernel.}
+        \end{figure}      
+        
+        \begin{figure}[!h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig2/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig2/050.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig2/100.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig2/199.png} 
+            \end{minipage} 
+            \caption{Simulation 5 at various iterations, this simulation uses the cubic spline kernel.}
+        \end{figure}          
+    
+        As expected from figure 4, the overall simulations of our toy star model regardless of spline produces the same general result. This shows that our SPH produces similar results that correctly predict those found analytically using the toy star model. One major point of difference seen between our solution and the analytic solution is the values found near the edge of our toy star. This is likely caused by the simulation not having run for a sufficient amount of timesteps. Looking at figures 5 and 6 it appears as though our models become a perfect circle, but looking at figure 4 this is likely not the case. As a result of our approximation of fluids as a collection of elements, it is entirely possible that we have elements that are pushed outside the prescribed radius. This is the most probable reason to why the density at the edge of the model is not that seen in the analytic solution.
+        
+        Additional simulations were run that fell outside the scope of those described in the toy star paper \cite{Monaghan2006}. I ran two additional cases to test the effects of collision in this SPH code. Surprisingly, in simulation 6 we see what appears to be mixing between the two initial stars. This is likely caused by the large acceleration the stars experience, tearing them apart before being recombined. As this tearing and recombination occurs multiple times there may be an artificial mixing that occurs. To ensure there is no unknown mixing hidden in the code model 7 was run. In this case we have a relatively small number of particles fall onto our larger star. Here I color code the particles to clearly show any mixing effect. As expected there is no observed mixing between the two particles, instead the particles that were initially in the right remained on that portion of the larger star.
+        
+        \begin{figure}[!ht]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig3/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig3/050.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig3/100.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig3/199.png} 
+            \end{minipage} 
+            \caption{Simulation 6 at various iterations, the two stars are of equal particles and size and are given a small initial kick towards each other.}
+        \end{figure}          
+
+        \begin{figure}[!h]
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig4/000.png}
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig4/050.png} 
+                \vspace{4ex}
+            \end{minipage} 
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig4/100.png} 
+            \end{minipage}%%
+            \begin{minipage}[b]{0.5\linewidth}
+                \centering
+                \includegraphics[width=0.75\linewidth]{../Fig4/199.png} 
+            \end{minipage} 
+            \caption{Simulation 7 at various iterations, this simulation clearly shows that there is no internal mixing.}
+        \end{figure}          
+    
+    \clearpage
+    \newpage    
+    \pagebreak
+    \newpage
+
+	\section{Discussion}
+        
+        In this project	 we implemented our own simple two dimensional SPH code. In order to test its validity, we compare our results to toy star models\cite{Monaghan2006}. The results of our code reliably match analytic solutions found given by these toy stars. In addition to these results, there were no unexpected physical phenomena arising from our code except when collisions were being tested where the possibility of mixing may have occurred, however this was a result of our toy models breaking into smaller pieces and being reformed with each other. Shown explicitly in a subsequent model, we see that there is no internal mixing that may have arisen from our code.
+        
+        \subsection{Extensions}
+	
+        Due to the relatively simple theory behind SPH, further extension of our code is entirely possible. What may be the most obvious improvement to the code that could be made is the expansion of the models to a third dimension. With how general the code was written, this expansion should be relatively simple to do. Beyond this, most logical additions to the code would require considerable more time and theory. As explained previously, the choice of smoothing length is a key choice to be made in SPH. Having too small of a $h$ value results in inaccurate results, while having too large of an $h$ value causes extended computation. What has been done to alleviate this problem is the concept of adaptive smoothing lengths. This change in $h$ is such that the value is no longer initially defined as a length but instead, as minimum number of points that must be encompassed by our smoothing length. As a result of this, more densely populated portions can have small smoothing lengths reducing the calculations required. An inverse of this is that sparsely populated areas have large smoothing lengths to accommodate. 
+        
+        Outside of these two large changes in the code, moving from python to a code more suited for numerical simulations would be necessary. With our current implementation of SPH, simulation 6 took hours to complete. The scaling of computational resources required in SPH scales as $N^2$ where $N$ is the number of particles. Doubling the amount of particles used would increase the amount of time required by a factor of four. To even approach more complex physical systems with this code, parallelization and further optimization must be done for this to be viable.  
+	
+	    Beyond possible improvements I can make to my current implementation of SPH, research is more established SPH code continues. Recently SPH, code has been used to attempt to probe complex systems ranging from protostellar outflows to black hole accretion disks. Clearly as more complex systems arise and require analysis computational models will expand in an attempt to explain these systems.
+	
+    \section*{Acknowledgements}
+        I would like to thank Philip Mocz for his help through personal emails in this topic.
+    	
+	\newpage
+	\pagebreak
+		
+\bibliographystyle{abbrv}
+\bibliography{references}
+	
+\end{document}
